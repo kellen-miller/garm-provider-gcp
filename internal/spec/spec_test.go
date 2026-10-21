@@ -157,6 +157,20 @@ func TestJsonSchemaValidation(t *testing.T) {
 			errString: "",
 		},
 		{
+			name: "Specs just with spot true",
+			input: json.RawMessage(`{
+				"spot": true
+			}`),
+			errString: "",
+		},
+		{
+			name: "Specs just with spot false",
+			input: json.RawMessage(`{
+				"spot": false
+			}`),
+			errString: "",
+		},
+		{
 			name: "Specs just with runner_install_template",
 			input: json.RawMessage(`{
 				"runner_install_template": "IyEvYmluL2Jhc2gKZWNobyBJbnN0YWxsaW5nIHJ1bm5lci4uLg=="
@@ -259,6 +273,13 @@ func TestJsonSchemaValidation(t *testing.T) {
 				"disable_updates": "false"
 			}`),
 			errString: "schema validation failed: [disable_updates: Invalid type. Expected: boolean, given: string]",
+		},
+		{
+			name: "Invalid input for spot - wrong data type",
+			input: json.RawMessage(`{
+				"spot": "true"
+			}`),
+			errString: "schema validation failed: [spot: Invalid type. Expected: boolean, given: string]",
 		},
 		{
 			name: "Invalid input for runner_install_template - wrong data type",
