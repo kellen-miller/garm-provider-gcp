@@ -29,6 +29,7 @@ import (
 	"github.com/googleapis/gax-go/v2/apierror"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 	"google.golang.org/api/googleapi"
 	"google.golang.org/protobuf/proto"
 )
@@ -52,7 +53,10 @@ func TestCreateInstanceLinux(t *testing.T) {
 	}
 
 	mockOperation := &compute.Operation{}
-	mockClient.On("Insert", mock.Anything, mock.Anything, mock.Anything).Return(mockOperation, nil)
+	mockClient.On("Insert", mock.Anything, mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
+		request := args.Get(1).(*computepb.InsertInstanceRequest)
+		assert.Nil(t, request.InstanceResource.Scheduling)
+	}).Return(mockOperation, nil)
 	spec.DefaultCloudConfigFunc = func(bootstrapParams params.BootstrapInstance, tools params.RunnerApplicationDownload, runnerName string) (string, error) {
 		return "MockUserData", nil
 	}
@@ -100,10 +104,87 @@ func TestCreateInstanceLinux(t *testing.T) {
 	result, err := gcpCli.CreateInstance(ctx, spec)
 	assert.NoError(t, err)
 	assert.Equal(t, expectedInstance.Name, result.Name)
+	assert.Nil(t, result.Scheduling)
 	for key, value := range expectedInstance.Metadata.Items {
 		assert.Equal(t, *expectedInstance.Metadata.Items[key].Key, *value.Key)
 		assert.Equal(t, *expectedInstance.Metadata.Items[key].Value, *value.Value)
 	}
+	mockClient.AssertExpectations(t)
+}
+
+func TestCreateInstanceSpot(t *testing.T) {
+	ctx := context.Background()
+	mockClient := new(MockGcpClient)
+	originalWaitOp := WaitOp
+	t.Cleanup(func() {
+		WaitOp = originalWaitOp
+	})
+	originalDefaultCloudConfigFunc := spec.DefaultCloudConfigFunc
+	t.Cleanup(func() {
+		spec.DefaultCloudConfigFunc = originalDefaultCloudConfigFunc
+	})
+	WaitOp = func(op *compute.Operation, ctx context.Context, opts ...gax.CallOption) error {
+		return nil
+	}
+	gcpCli := &GcpCli{
+		cfg: &config.Config{
+			Zone:             "europe-west1-d",
+			ProjectId:        "my-project",
+			NetworkID:        "my-network",
+			SubnetworkID:     "my-subnetwork",
+			CredentialsFile:  "path/to/credentials.json",
+			ExternalIPAccess: true,
+		},
+		client: mockClient,
+	}
+
+	mockOperation := &compute.Operation{}
+	mockClient.On("Insert", mock.Anything, mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
+		request := args.Get(1).(*computepb.InsertInstanceRequest)
+		scheduling := request.InstanceResource.Scheduling
+		require.NotNil(t, scheduling)
+		assert.Equal(t, "SPOT", scheduling.GetProvisioningModel())
+		assert.Equal(t, "DELETE", scheduling.GetInstanceTerminationAction())
+		require.NotNil(t, scheduling.AutomaticRestart)
+		assert.False(t, scheduling.GetAutomaticRestart())
+		assert.Equal(t, "TERMINATE", scheduling.GetOnHostMaintenance())
+	}).Return(mockOperation, nil)
+	spec.DefaultCloudConfigFunc = func(bootstrapParams params.BootstrapInstance, tools params.RunnerApplicationDownload, runnerName string) (string, error) {
+		return "MockUserData", nil
+	}
+
+	runnerSpec := &spec.RunnerSpec{
+		Zone: "europe-west1-d",
+		Tools: params.RunnerApplicationDownload{
+			OS:           proto.String("linux"),
+			Architecture: proto.String("amd64"),
+			DownloadURL:  proto.String("MockURL"),
+			Filename:     proto.String("garm-runner"),
+		},
+		NetworkID:    "my-network",
+		SubnetworkID: "my-subnetwork",
+		ControllerID: "my-controller",
+		NicType:      "VIRTIO_NET",
+		DiskSize:     50,
+		Spot:         true,
+		BootstrapParams: params.BootstrapInstance{
+			Name:   "garm-instance",
+			Flavor: "n1-standard-1",
+			Image:  "projects/garm-testing/global/images/garm-image",
+			OSType: params.Linux,
+			OSArch: "amd64",
+		},
+	}
+
+	result, err := gcpCli.CreateInstance(ctx, runnerSpec)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.NotNil(t, result.Scheduling)
+	assert.Equal(t, "SPOT", result.Scheduling.GetProvisioningModel())
+	assert.Equal(t, "DELETE", result.Scheduling.GetInstanceTerminationAction())
+	require.NotNil(t, result.Scheduling.AutomaticRestart)
+	assert.False(t, result.Scheduling.GetAutomaticRestart())
+	assert.Equal(t, "TERMINATE", result.Scheduling.GetOnHostMaintenance())
 	mockClient.AssertExpectations(t)
 }
 
