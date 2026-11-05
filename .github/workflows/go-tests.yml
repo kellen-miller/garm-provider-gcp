@@ -1,4 +1,4 @@
-name: Go Tests
+name: Go
 
 on:
   push:
@@ -9,7 +9,8 @@ on:
       - main
 
 jobs:
-  go-tests:
+  verify-packages:
+    name: Go / Formatting, static analysis and package tests
     runs-on: ubuntu-latest
 
     steps:
